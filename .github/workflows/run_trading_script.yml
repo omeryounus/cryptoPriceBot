@@ -1,0 +1,36 @@
+name: Run Trading Script
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy
+
+    - name: Run script and capture output
+      run: |
+        python bitcoin_trading.py > trading_output.txt
+        cat trading_output.txt
+
+    - name: Upload output artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: trading-simulation-results
+        path: trading_output.txt
