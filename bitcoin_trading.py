@@ -1,82 +1,66 @@
+import yfinance as yf
 import pandas as pd
-import numpy as np
+from datetime import datetime, timedelta
 
-# Set random seed for reproducibility
-np.random.seed(20)
+def run_trading_bot():
+    print(f"--- Running Bitcoin Trading Bot at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---")
 
-# Parameters for Geometric Brownian Motion
-days = 60
-dt = 1 # 1 day
-mu = 0.0005 # Expected daily return (slight upward drift)
-sigma = 0.03 # Daily volatility (approx 3% daily for Bitcoin)
-initial_price = 50000
+    # Fetch 60 days of historical Bitcoin data
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=60)
 
-# Simulate prices
-prices = [initial_price]
-for _ in range(1, days):
-    # GBM formula
-    shock = np.random.normal(0, 1)
-    drift = (mu - 0.5 * sigma**2) * dt
-    diffusion = sigma * np.sqrt(dt) * shock
-    price = prices[-1] * np.exp(drift + diffusion)
-    prices.append(price)
+    try:
+        btc = yf.download("BTC-USD", start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'), progress=False)
 
-# Create DataFrame
-dates = pd.date_range(start="2023-01-01", periods=days)
-df = pd.DataFrame({'Date': dates, 'Price': prices})
+        if btc.empty:
+            print("Error: Could not fetch data from yfinance.")
+            return
 
-# Calculate Moving Averages
-df['7_day_MA'] = df['Price'].rolling(window=7).mean()
-df['30_day_MA'] = df['Price'].rolling(window=30).mean()
+        # Calculate Moving Averages on Close prices
+        df = btc[['Close']].copy()
 
-# Trading Algorithm
-initial_portfolio_value = 100000.0
-cash = initial_portfolio_value
-btc_holdings = 0.0
+        # yf.download can return a MultiIndex if multiple tickers are given, or a regular index for one.
+        # Since pandas 2.2+ multi-indexes for single tickers might occur depending on yfinance version,
+        # let's try to flatten it safely if needed.
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
 
-print("Daily Ledger of Trades:")
-print("-" * 60)
+        df['7_day_MA'] = df['Close'].rolling(window=7).mean()
+        df['30_day_MA'] = df['Close'].rolling(window=30).mean()
 
-for i in range(len(df)):
-    date = df.loc[i, 'Date'].strftime('%Y-%m-%d')
-    price = df.loc[i, 'Price']
-    ma7 = df.loc[i, '7_day_MA']
-    ma30 = df.loc[i, '30_day_MA']
+        # Get latest data
+        current_price = df['Close'].iloc[-1].item() if hasattr(df['Close'].iloc[-1], 'item') else df['Close'].iloc[-1]
+        current_ma7 = df['7_day_MA'].iloc[-1].item() if hasattr(df['7_day_MA'].iloc[-1], 'item') else df['7_day_MA'].iloc[-1]
+        current_ma30 = df['30_day_MA'].iloc[-1].item() if hasattr(df['30_day_MA'].iloc[-1], 'item') else df['30_day_MA'].iloc[-1]
 
-    # Check if we have MA data (skip initial days where MA30 is not available)
-    if pd.isna(ma7) or pd.isna(ma30):
-        continue
+        prev_ma7 = df['7_day_MA'].iloc[-2].item() if hasattr(df['7_day_MA'].iloc[-2], 'item') else df['7_day_MA'].iloc[-2]
+        prev_ma30 = df['30_day_MA'].iloc[-2].item() if hasattr(df['30_day_MA'].iloc[-2], 'item') else df['30_day_MA'].iloc[-2]
 
-    # Previous day's MAs to detect crosses
-    prev_ma7 = df.loc[i-1, '7_day_MA']
-    prev_ma30 = df.loc[i-1, '30_day_MA']
+        print(f"Current BTC Price: ${current_price:.2f}")
+        print(f"7-Day MA:          ${current_ma7:.2f}")
+        print(f"30-Day MA:         ${current_ma30:.2f}")
+        print("-" * 40)
 
-    if pd.isna(prev_ma7) or pd.isna(prev_ma30):
-        continue
+        # Determine Signal
+        signal = "HOLD"
+        reason = "No crossover detected."
 
-    # Golden Cross: 7-day MA crosses above 30-day MA
-    if prev_ma7 <= prev_ma30 and ma7 > ma30:
-        if cash > 0:
-            btc_bought = cash / price
-            btc_holdings += btc_bought
-            print(f"{date}: BUY  {btc_bought:.4f} BTC @ ${price:.2f} | Total Value: ${btc_holdings*price:.2f}")
-            cash = 0.0
+        if pd.isna(current_ma30) or pd.isna(prev_ma30):
+            signal = "HOLD"
+            reason = "Not enough data for 30-day MA."
+        elif prev_ma7 <= prev_ma30 and current_ma7 > current_ma30:
+            signal = "BUY"
+            reason = "Golden Cross! 7-day MA crossed ABOVE 30-day MA."
+        elif prev_ma7 >= prev_ma30 and current_ma7 < current_ma30:
+            signal = "SELL"
+            reason = "Death Cross! 7-day MA crossed BELOW 30-day MA."
 
-    # Death Cross: 7-day MA crosses below 30-day MA
-    elif prev_ma7 >= prev_ma30 and ma7 < ma30:
-        if btc_holdings > 0:
-            cash_from_sale = btc_holdings * price
-            print(f"{date}: SELL {btc_holdings:.4f} BTC @ ${price:.2f} | Total Value: ${cash_from_sale:.2f}")
-            cash = cash_from_sale
-            btc_holdings = 0.0
+        print(f"ACTION SIGNAL: {signal}")
+        print(f"REASON: {reason}")
+        print("-" * 40)
 
-print("-" * 60)
+    except Exception as e:
+        print(f"An error occurred during execution: {e}")
 
-# Final portfolio performance
-final_price = df.iloc[-1]['Price']
-final_portfolio_value = cash + btc_holdings * final_price
-roi = ((final_portfolio_value - initial_portfolio_value) / initial_portfolio_value) * 100
-
-print(f"Initial Portfolio Value: ${initial_portfolio_value:.2f}")
-print(f"Final Portfolio Value:   ${final_portfolio_value:.2f}")
-print(f"Return on Investment:    {roi:.2f}%")
+if __name__ == "__main__":
+    run_trading_bot()
